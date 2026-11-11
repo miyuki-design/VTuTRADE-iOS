@@ -285,17 +285,27 @@ jobs:
           /usr/libexec/PlistBuddy \
             -c "Print :CFBundleVersion" "$PLIST"
 
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleIconName" "$PLIST"
+          echo "===== アイコン情報 ====="
 
-          echo "===== アイコン確認 ====="
+          if /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName" \
+            "$PLIST"; then
+            echo "✅ アイコン名を確認"
+          else
+            echo "❌ CFBundleIcons内にアイコン名がありません"
+            echo "===== アイコン関連のInfo.plist診断 ====="
+            plutil -p "$PLIST" | grep -A 15 'CFBundleIcons' || true
+            exit 1
+          fi
+
+          echo "===== Asset Catalog ====="
 
           if [ ! -f "$APP/Assets.car" ]; then
             echo "❌ Assets.car が見つかりません"
             exit 1
           fi
 
-          echo "✅ アプリ情報とAsset Catalogを確認"
+          echo "✅ アプリ情報とアイコンを確認"
 
       - name: Create export options
         run: |
