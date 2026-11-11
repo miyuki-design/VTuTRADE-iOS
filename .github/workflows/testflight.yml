@@ -27,6 +27,59 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 
+            - name: Diagnose P12 certificate
+        env:
+          CERTIFICATE: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          echo "===== STEP 1: Secret確認 ====="
+
+          if [ -z "$CERTIFICATE" ]; then
+            echo "❌ P12のBase64が空です"
+            exit 1
+          fi
+
+          if [ -z "$CERT_PASSWORD" ]; then
+            echo "❌ P12パスワードが空です"
+            exit 1
+          fi
+
+          echo "✅ 両方のSecretが存在します"
+
+          echo "===== STEP 2: Base64確認 ====="
+
+          printf '%s' "$CERTIFICATE" |
+            base64 --decode > "$RUNNER_TEMP/check.p12"
+
+          echo "✅ Base64変換成功"
+
+          echo "===== STEP 3: P12検証 ====="
+
+          if openssl pkcs12 \
+            -in "$RUNNER_TEMP/check.p12" \
+            -noout \
+            -passin env:CERT_PASSWORD
+          then
+            echo "✅ P12ファイルとパスワードは一致しています"
+          else
+            echo "❌ P12の検証に失敗しました"
+            exit 1
+          fi
+
+          echo "===== STEP 4: 暗号化方式 ====="
+
+          openssl pkcs12 \
+            -in "$RUNNER_TEMP/check.p12" \
+            -info \
+            -noout \
+            -passin env:CERT_PASSWORD \
+            2>&1 |
+            grep -E 'MAC:|PKCS7 Encrypted data:|Shrouded Keybag:'
+
+          rm -f "$RUNNER_TEMP/check.p12"
+
       - name: Install signing certificate and profile
         env:
           CERTIFICATE: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
