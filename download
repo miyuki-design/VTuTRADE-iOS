@@ -1,0 +1,7 @@
+*.xcodeproj/
+*.xcworkspace/
+.DS_Store
+.env
+.api_token
+*.p12
+*.mobileprovision
