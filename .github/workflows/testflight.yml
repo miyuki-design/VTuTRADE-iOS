@@ -21,11 +21,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+
+          brew install xcodegen
+
+          if ! brew list --versions openssl@3 >/dev/null 2>&1; then
+            brew install openssl@3
+          fi
+
+          OPENSSL3="$(brew --prefix openssl@3)/bin/openssl"
+
+          "$OPENSSL3" version
+          xcodegen --version
 
       - name: Generate Xcode project
-        run: xcodegen generate --spec project.yml
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
 
       - name: Diagnose P12 certificate
         env:
@@ -33,6 +47,8 @@ jobs:
           CERT_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
         run: |
           set -euo pipefail
+
+          OPENSSL3="$(brew --prefix openssl@3)/bin/openssl"
 
           echo "===== STEP 1: Secret確認 ====="
 
@@ -60,7 +76,7 @@ jobs:
 
           echo "===== STEP 3: P12検証 ====="
 
-          openssl pkcs12 \
+          "$OPENSSL3" pkcs12 \
             -in "$RUNNER_TEMP/check.p12" \
             -noout \
             -passin env:CERT_PASSWORD
@@ -69,7 +85,7 @@ jobs:
 
           echo "===== STEP 4: 暗号化方式 ====="
 
-          openssl pkcs12 \
+          "$OPENSSL3" pkcs12 \
             -in "$RUNNER_TEMP/check.p12" \
             -info \
             -noout \
@@ -87,6 +103,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          OPENSSL3="$(brew --prefix openssl@3)/bin/openssl"
+
           echo "===== STEP 1: 証明書の復元 ====="
 
           printf '%s' "$CERTIFICATE" \
@@ -102,15 +120,15 @@ jobs:
 
           echo "===== STEP 2: P12互換形式への変換 ====="
 
-          openssl pkcs12 \
+          "$OPENSSL3" pkcs12 \
             -in "$RUNNER_TEMP/cert.p12" \
-            -nodes \
+            -noenc \
             -passin env:CERT_PASSWORD \
             -out "$RUNNER_TEMP/cert.pem"
 
           chmod 600 "$RUNNER_TEMP/cert.pem"
 
-          openssl pkcs12 \
+          "$OPENSSL3" pkcs12 \
             -export \
             -legacy \
             -in "$RUNNER_TEMP/cert.pem" \
