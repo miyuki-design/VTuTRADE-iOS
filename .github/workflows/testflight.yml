@@ -50,23 +50,22 @@ jobs:
 
           echo "===== STEP 2: Base64確認 ====="
 
-          printf '%s' "$CERTIFICATE" |
-            base64 --decode > "$RUNNER_TEMP/check.p12"
+          printf '%s' "$CERTIFICATE" \
+            | base64 --decode \
+            > "$RUNNER_TEMP/check.p12"
+
+          chmod 600 "$RUNNER_TEMP/check.p12"
 
           echo "✅ Base64変換成功"
 
           echo "===== STEP 3: P12検証 ====="
 
-          if openssl pkcs12 \
+          openssl pkcs12 \
             -in "$RUNNER_TEMP/check.p12" \
             -noout \
             -passin env:CERT_PASSWORD
-          then
-            echo "✅ P12ファイルとパスワードは一致しています"
-          else
-            echo "❌ P12の検証に失敗しました"
-            exit 1
-          fi
+
+          echo "✅ P12ファイルとパスワードは一致しています"
 
           echo "===== STEP 4: 暗号化方式 ====="
 
@@ -75,8 +74,8 @@ jobs:
             -info \
             -noout \
             -passin env:CERT_PASSWORD \
-            2>&1 |
-            grep -E 'MAC:|PKCS7 Encrypted data:|Shrouded Keybag:'
+            2>&1 \
+            | grep -E 'MAC:|PKCS7 Encrypted data:|Shrouded Keybag:'
 
           rm -f "$RUNNER_TEMP/check.p12"
 
@@ -88,29 +87,91 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          echo "$PROFILE" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+          echo "===== STEP 1: 証明書の復元 ====="
 
-          security create-keychain -p "" build.keychain
-          security set-keychain-settings -lut 21600 build.keychain
-          security unlock-keychain -p "" build.keychain
+          printf '%s' "$CERTIFICATE" \
+            | base64 --decode \
+            > "$RUNNER_TEMP/cert.p12"
 
-          security import "$RUNNER_TEMP/cert.p12" \
-            -k build.keychain \
+          printf '%s' "$PROFILE" \
+            | base64 --decode \
+            > "$RUNNER_TEMP/profile.mobileprovision"
+
+          chmod 600 "$RUNNER_TEMP/cert.p12"
+          chmod 600 "$RUNNER_TEMP/profile.mobileprovision"
+
+          echo "===== STEP 2: P12互換形式への変換 ====="
+
+          openssl pkcs12 \
+            -in "$RUNNER_TEMP/cert.p12" \
+            -nodes \
+            -passin env:CERT_PASSWORD \
+            -out "$RUNNER_TEMP/cert.pem"
+
+          chmod 600 "$RUNNER_TEMP/cert.pem"
+
+          openssl pkcs12 \
+            -export \
+            -legacy \
+            -in "$RUNNER_TEMP/cert.pem" \
+            -out "$RUNNER_TEMP/cert-legacy.p12" \
+            -passout env:CERT_PASSWORD
+
+          chmod 600 "$RUNNER_TEMP/cert-legacy.p12"
+
+          echo "✅ P12互換形式への変換完了"
+
+          echo "===== STEP 3: Keychain作成 ====="
+
+          security create-keychain \
+            -p "" \
+            "$RUNNER_TEMP/build.keychain-db"
+
+          security set-keychain-settings \
+            -lut 21600 \
+            "$RUNNER_TEMP/build.keychain-db"
+
+          security unlock-keychain \
+            -p "" \
+            "$RUNNER_TEMP/build.keychain-db"
+
+          echo "===== STEP 4: 証明書のインポート ====="
+
+          security import "$RUNNER_TEMP/cert-legacy.p12" \
+            -k "$RUNNER_TEMP/build.keychain-db" \
             -P "$CERT_PASSWORD" \
             -T /usr/bin/codesign
 
           security set-key-partition-list \
             -S apple-tool:,apple: \
-            -s -k "" build.keychain
+            -s \
+            -k "" \
+            "$RUNNER_TEMP/build.keychain-db"
 
-          security list-keychains -d user -s build.keychain
+          security list-keychains \
+            -d user \
+            -s "$RUNNER_TEMP/build.keychain-db"
 
-          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          security default-keychain \
+            -d user \
+            -s "$RUNNER_TEMP/build.keychain-db"
+
+          echo "===== STEP 5: 署名ID確認 ====="
+
+          security find-identity \
+            -v -p codesigning \
+            "$RUNNER_TEMP/build.keychain-db"
+
+          echo "===== STEP 6: Provisioning Profile登録 ====="
+
+          mkdir -p \
+            "$HOME/Library/MobileDevice/Provisioning Profiles"
 
           PROFILE_UUID=$(
-            security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" \
-            | plutil -extract UUID raw -
+            security cms \
+              -D \
+              -i "$RUNNER_TEMP/profile.mobileprovision" \
+              | plutil -extract UUID raw -
           )
 
           cp "$RUNNER_TEMP/profile.mobileprovision" \
@@ -118,19 +179,29 @@ jobs:
 
           echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
 
+          echo "===== STEP 7: 一時秘密鍵の削除 ====="
+
+          rm -f "$RUNNER_TEMP/cert.pem"
+          rm -f "$RUNNER_TEMP/cert-legacy.p12"
+
+          echo "✅ 証明書とプロファイルの設定完了"
+
       - name: Install App Store Connect API key
         env:
           API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
         run: |
           set -euo pipefail
 
-          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          mkdir -p \
+            "$HOME/.appstoreconnect/private_keys"
 
           printf '%s\n' "$API_PRIVATE_KEY" \
             > "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8"
 
           chmod 600 \
             "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8"
+
+          echo "✅ App Store Connect APIキー設定完了"
 
       - name: Archive iOS app
         run: |
@@ -146,10 +217,15 @@ jobs:
             PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
             CODE_SIGN_STYLE=Manual \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
-            CODE_SIGN_IDENTITY="Apple Distribution"
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}"
+
+          echo "✅ iOSアーカイブ作成完了"
 
       - name: Create export options
         run: |
+          set -euo pipefail
+
           cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -171,6 +247,8 @@ jobs:
           </plist>
           EOF
 
+          echo "✅ ExportOptions.plist作成完了"
+
       - name: Export IPA
         run: |
           set -euo pipefail
@@ -180,13 +258,23 @@ jobs:
             -exportPath "$RUNNER_TEMP/export" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
 
+          echo "✅ IPA書き出し完了"
+
       - name: Upload to TestFlight
         run: |
           set -euo pipefail
 
-          IPA=$(find "$RUNNER_TEMP/export" -name "*.ipa" -print -quit)
+          IPA=$(find "$RUNNER_TEMP/export" \
+            -name "*.ipa" \
+            -print \
+            -quit)
 
-          test -n "$IPA"
+          if [ -z "$IPA" ]; then
+            echo "❌ IPAファイルが見つかりません"
+            exit 1
+          fi
+
+          echo "===== TestFlightアップロード開始 ====="
 
           xcrun altool --upload-app \
             --type ios \
@@ -194,10 +282,27 @@ jobs:
             --apiKey "$API_KEY_ID" \
             --apiIssuer "$API_ISSUER_ID"
 
+          echo "✅ TestFlightアップロード完了"
+
       - name: Cleanup signing files
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/cert.p12"
+          rm -f "$RUNNER_TEMP/cert.pem"
+          rm -f "$RUNNER_TEMP/cert-legacy.p12"
+          rm -f "$RUNNER_TEMP/check.p12"
           rm -f "$RUNNER_TEMP/profile.mobileprovision"
-          rm -f "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8"
-          security delete-keychain build.keychain 2>/dev/null || true
+
+          rm -f \
+            "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8"
+
+          if [ -n "${PROFILE_UUID:-}" ]; then
+            rm -f \
+              "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          fi
+
+          security delete-keychain \
+            "$RUNNER_TEMP/build.keychain-db" \
+            2>/dev/null || true
+
+          echo "✅ 一時ファイルの削除完了"
