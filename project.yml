@@ -31,7 +31,7 @@ targets:
 
         # アプリアイコン
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        INFOPLIST_KEY_CFBundleIconName: AppIcon
+        INFOPLIST_KEY_CFBundleIcons_CFBundlePrimaryIcon_CFBundleIconName: AppIcon
 
         # アプリの基本設定
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
