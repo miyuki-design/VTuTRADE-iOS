@@ -27,7 +27,7 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 
-            - name: Diagnose P12 certificate
+      - name: Diagnose P12 certificate
         env:
           CERTIFICATE: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
           CERT_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
