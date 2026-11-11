@@ -21,11 +21,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26'
+
+      - name: Verify Xcode and SDK
+        run: |
+          set -euo pipefail
+
+          echo "===== Xcode ====="
+          xcodebuild -version
+
+          echo "===== iOS SDK ====="
+          SDK_VERSION=$(xcrun --sdk iphoneos --show-sdk-version)
+          echo "$SDK_VERSION"
+
+          SDK_MAJOR="${SDK_VERSION%%.*}"
+
+          if [ "$SDK_MAJOR" -lt 26 ]; then
+            echo "❌ iOS 26 SDK以降が必要です"
+            exit 1
+          fi
+
+          echo "✅ XcodeとiOS SDKの確認完了"
+
       - name: Install build tools
         run: |
           set -euo pipefail
 
-          brew install xcodegen
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
 
           if ! brew list --versions openssl@3 >/dev/null 2>&1; then
             brew install openssl@3
@@ -36,10 +63,43 @@ jobs:
           "$OPENSSL3" version
           xcodegen --version
 
+      - name: Verify app icon source
+        run: |
+          set -euo pipefail
+
+          ICON="VTuTRADE/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
+          CONTENTS="VTuTRADE/Assets.xcassets/AppIcon.appiconset/Contents.json"
+
+          if [ ! -f "$ICON" ]; then
+            echo "❌ AppIcon.png が見つかりません"
+            echo "必要な場所: $ICON"
+            exit 1
+          fi
+
+          if [ ! -f "$CONTENTS" ]; then
+            echo "❌ Contents.json が見つかりません"
+            echo "必要な場所: $CONTENTS"
+            exit 1
+          fi
+
+          WIDTH=$(sips -g pixelWidth "$ICON" | awk '/pixelWidth/ {print $2}')
+          HEIGHT=$(sips -g pixelHeight "$ICON" | awk '/pixelHeight/ {print $2}')
+
+          if [ "$WIDTH" != "1024" ] || [ "$HEIGHT" != "1024" ]; then
+            echo "❌ アイコンは1024×1024ピクセルにしてください"
+            echo "現在: ${WIDTH}×${HEIGHT}"
+            exit 1
+          fi
+
+          echo "✅ アプリアイコン確認完了"
+
       - name: Generate Xcode project
         run: |
           set -euo pipefail
+
           xcodegen generate --spec project.yml
+
+          echo "✅ Xcodeプロジェクト生成完了"
 
       - name: Diagnose P12 certificate
         env:
@@ -47,51 +107,27 @@ jobs:
           CERT_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
         run: |
           set -euo pipefail
+          umask 077
 
           OPENSSL3="$(brew --prefix openssl@3)/bin/openssl"
 
-          echo "===== STEP 1: Secret確認 ====="
+          echo "===== Secret確認 ====="
 
-          if [ -z "$CERTIFICATE" ]; then
-            echo "❌ P12のBase64が空です"
+          if [ -z "$CERTIFICATE" ] || [ -z "$CERT_PASSWORD" ]; then
+            echo "❌ 証明書またはパスワードが未設定です"
             exit 1
           fi
-
-          if [ -z "$CERT_PASSWORD" ]; then
-            echo "❌ P12パスワードが空です"
-            exit 1
-          fi
-
-          echo "✅ 両方のSecretが存在します"
-
-          echo "===== STEP 2: Base64確認 ====="
 
           printf '%s' "$CERTIFICATE" \
             | base64 --decode \
             > "$RUNNER_TEMP/check.p12"
-
-          chmod 600 "$RUNNER_TEMP/check.p12"
-
-          echo "✅ Base64変換成功"
-
-          echo "===== STEP 3: P12検証 ====="
 
           "$OPENSSL3" pkcs12 \
             -in "$RUNNER_TEMP/check.p12" \
             -noout \
             -passin env:CERT_PASSWORD
 
-          echo "✅ P12ファイルとパスワードは一致しています"
-
-          echo "===== STEP 4: 暗号化方式 ====="
-
-          "$OPENSSL3" pkcs12 \
-            -in "$RUNNER_TEMP/check.p12" \
-            -info \
-            -noout \
-            -passin env:CERT_PASSWORD \
-            2>&1 \
-            | grep -E 'MAC:|PKCS7 Encrypted data:|Shrouded Keybag:'
+          echo "✅ P12ファイルとパスワードの一致を確認"
 
           rm -f "$RUNNER_TEMP/check.p12"
 
@@ -102,10 +138,11 @@ jobs:
           PROFILE: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
+          umask 077
 
           OPENSSL3="$(brew --prefix openssl@3)/bin/openssl"
 
-          echo "===== STEP 1: 証明書の復元 ====="
+          echo "===== 証明書の復元 ====="
 
           printf '%s' "$CERTIFICATE" \
             | base64 --decode \
@@ -115,18 +152,13 @@ jobs:
             | base64 --decode \
             > "$RUNNER_TEMP/profile.mobileprovision"
 
-          chmod 600 "$RUNNER_TEMP/cert.p12"
-          chmod 600 "$RUNNER_TEMP/profile.mobileprovision"
-
-          echo "===== STEP 2: P12互換形式への変換 ====="
+          echo "===== P12互換形式への変換 ====="
 
           "$OPENSSL3" pkcs12 \
             -in "$RUNNER_TEMP/cert.p12" \
             -noenc \
             -passin env:CERT_PASSWORD \
             -out "$RUNNER_TEMP/cert.pem"
-
-          chmod 600 "$RUNNER_TEMP/cert.pem"
 
           "$OPENSSL3" pkcs12 \
             -export \
@@ -135,11 +167,7 @@ jobs:
             -out "$RUNNER_TEMP/cert-legacy.p12" \
             -passout env:CERT_PASSWORD
 
-          chmod 600 "$RUNNER_TEMP/cert-legacy.p12"
-
-          echo "✅ P12互換形式への変換完了"
-
-          echo "===== STEP 3: Keychain作成 ====="
+          echo "===== Keychain作成 ====="
 
           security create-keychain \
             -p "" \
@@ -153,7 +181,7 @@ jobs:
             -p "" \
             "$RUNNER_TEMP/build.keychain-db"
 
-          echo "===== STEP 4: 証明書のインポート ====="
+          echo "===== 証明書のインポート ====="
 
           security import "$RUNNER_TEMP/cert-legacy.p12" \
             -k "$RUNNER_TEMP/build.keychain-db" \
@@ -174,13 +202,13 @@ jobs:
             -d user \
             -s "$RUNNER_TEMP/build.keychain-db"
 
-          echo "===== STEP 5: 署名ID確認 ====="
+          echo "===== 署名ID確認 ====="
 
           security find-identity \
             -v -p codesigning \
             "$RUNNER_TEMP/build.keychain-db"
 
-          echo "===== STEP 6: Provisioning Profile登録 ====="
+          echo "===== Provisioning Profile登録 ====="
 
           mkdir -p \
             "$HOME/Library/MobileDevice/Provisioning Profiles"
@@ -197,8 +225,6 @@ jobs:
 
           echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
 
-          echo "===== STEP 7: 一時秘密鍵の削除 ====="
-
           rm -f "$RUNNER_TEMP/cert.pem"
           rm -f "$RUNNER_TEMP/cert-legacy.p12"
 
@@ -209,15 +235,13 @@ jobs:
           API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
         run: |
           set -euo pipefail
+          umask 077
 
           mkdir -p \
             "$HOME/.appstoreconnect/private_keys"
 
           printf '%s\n' "$API_PRIVATE_KEY" \
             > "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8"
-
-          chmod 600 \
-            "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8"
 
           echo "✅ App Store Connect APIキー設定完了"
 
@@ -236,9 +260,42 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
             CODE_SIGN_IDENTITY="Apple Distribution" \
+            MARKETING_VERSION="1.0.0" \
             CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}"
 
           echo "✅ iOSアーカイブ作成完了"
+
+      - name: Verify archived app
+        run: |
+          set -euo pipefail
+
+          APP="$RUNNER_TEMP/VTuTRADE.xcarchive/Products/Applications/VTuTRADE.app"
+          PLIST="$APP/Info.plist"
+
+          test -f "$PLIST"
+
+          echo "===== アプリ情報 ====="
+
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleIdentifier" "$PLIST"
+
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleShortVersionString" "$PLIST"
+
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleVersion" "$PLIST"
+
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleIconName" "$PLIST"
+
+          echo "===== アイコン確認 ====="
+
+          if [ ! -f "$APP/Assets.car" ]; then
+            echo "❌ Assets.car が見つかりません"
+            exit 1
+          fi
+
+          echo "✅ アプリ情報とAsset Catalogを確認"
 
       - name: Create export options
         run: |
