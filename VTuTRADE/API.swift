@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-struct Trade: Codable, Identifiable {
+struct Trade: Decodable, Identifiable {
     let tradeId: String?
     let contract: String?
     let profit: Double?
