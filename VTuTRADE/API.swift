@@ -29,6 +29,37 @@ struct Analysis: Decodable {
     let ema21: Double?
     let rsi14: Double?
 }
+struct ExperimentHistory: Decodable {
+    let environment: String
+    let experiments: [ExperimentSummary]
+}
+
+struct ExperimentSummary: Decodable, Identifiable {
+    let experimentId: String
+    let name: String
+    let totalTrades: Int
+    let wins: Int
+    let losses: Int
+    let winRate: Double
+    let totalProfit: Double
+    let averageProfit: Double
+    let firstTradeJst: String?
+    let lastTradeJst: String?
+    let recentTrades: [Trade]
+    var id: String { experimentId }
+    enum CodingKeys: String, CodingKey {
+        case name, wins, losses
+        case experimentId = "experiment_id"
+        case totalTrades = "total_trades"
+        case winRate = "win_rate"
+        case totalProfit = "total_profit"
+        case averageProfit = "average_profit"
+        case firstTradeJst = "first_trade_jst"
+        case lastTradeJst = "last_trade_jst"
+        case recentTrades = "recent_trades"
+    }
+}
+
 struct Dashboard: Decodable {
     let environment: String
     let paused: Bool
@@ -79,6 +110,8 @@ enum SecureToken {
 @MainActor
 final class TradeClient: ObservableObject {
     @Published var dashboard: Dashboard?
+    @Published var history: ExperimentHistory?
+    @Published var historyError: String?
     @Published var error: String?
     @Published var loading = false
     @Published var endpoint = UserDefaults.standard.string(forKey: "endpoint") ?? ""
@@ -119,6 +152,15 @@ final class TradeClient: ObservableObject {
             dashboard = model
             lastUpdated = Date()
             error = nil
+            do {
+                let historyData = try await request("history")
+                let historyModel = try JSONDecoder().decode(ExperimentHistory.self, from: historyData)
+                guard historyModel.environment == "DEMO" else { throw APIError.notDemo }
+                history = historyModel
+                historyError = nil
+            } catch {
+                historyError = "実験別戦歴の取得に失敗：\(error.localizedDescription)"
+            }
         } catch { self.error = error.localizedDescription }
     }
     func pause() async {

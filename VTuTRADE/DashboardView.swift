@@ -11,6 +11,7 @@ struct DashboardView: View {
     @StateObject private var client = TradeClient()
     @State private var showSettings = false
     @State private var confirmPause = false
+    @State private var selectedExperiment = "EXP-003"
     private let timer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -31,6 +32,7 @@ struct DashboardView: View {
                         metric("勝率", String(format: "%.1f%%", client.dashboard?.winRate ?? 0), "chart.bar")
                     }
                     analysisCard
+                    experimentHistoryCard
                     historyCard
                     if let error = client.error {
                         Text(error).font(.footnote).foregroundStyle(.orange)
@@ -120,7 +122,8 @@ struct DashboardView: View {
                 valueColumn("EMA21", number(client.dashboard?.analysis?.ema21, 5))
             }
             if let t = client.dashboard?.analysis?.time {
-                Text("足の確定時刻 (UTC)：\(t)").font(.caption2).foregroundStyle(Theme.muted)
+                Text("足の確定時刻（日本時間）：\(candleCloseJST(t))")
+                    .font(.caption2).foregroundStyle(Theme.muted)
             }
         }.cardStyle()
     }
@@ -130,6 +133,106 @@ struct DashboardView: View {
             Text(title).font(.caption).foregroundStyle(Theme.muted)
             Text(value).font(.system(.body, design: .monospaced).bold())
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var experimentHistoryCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("実験別戦歴").font(.headline)
+            if let experiments = client.history?.experiments, !experiments.isEmpty {
+                Picker("実験", selection: $selectedExperiment) {
+                    ForEach(experiments) { experiment in
+                        Text(experiment.name).tag(experiment.experimentId)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(Theme.cyan)
+
+                if let experiment = experiments.first(where: { $0.experimentId == selectedExperiment })
+                    ?? experiments.first {
+                    HStack(spacing: 12) {
+                        valueColumn("取引数", "\(experiment.totalTrades)件")
+                        valueColumn("勝率", String(format: "%.2f%%", experiment.winRate))
+                    }
+                    HStack(spacing: 12) {
+                        valueColumn("勝ち", "\(experiment.wins)件")
+                        valueColumn("負け", "\(experiment.losses)件")
+                    }
+                    Divider().overlay(Theme.muted.opacity(0.3))
+                    Text("累計損益：\(yen(experiment.totalProfit))")
+                        .font(.headline)
+                        .foregroundStyle(experiment.totalProfit < 0 ? .orange : Theme.cyan)
+                    Text("平均損益：\(yen(experiment.averageProfit))")
+                        .font(.subheadline)
+                    if let start = experiment.firstTradeJst, let end = experiment.lastTradeJst {
+                        Text("期間（日本時間）：\(start) 〜 \(end)")
+                            .font(.caption2).foregroundStyle(Theme.muted)
+                    }
+                    Text("直近の決済履歴（最大20件）")
+                        .font(.subheadline.bold())
+                    if experiment.recentTrades.isEmpty {
+                        Text("決済履歴はありません")
+                            .font(.caption).foregroundStyle(Theme.muted)
+                    } else {
+                        ForEach(experiment.recentTrades) { trade in
+                            HStack(alignment: .top, spacing: 8) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(trade.result == "WIN" ? "勝ち" : (trade.result == "LOSS" ? "負け" : "未判定"))
+                                        .font(.caption.bold())
+                                    Text("ID: \(trade.tradeId ?? "—")")
+                                        .font(.caption2).foregroundStyle(Theme.muted)
+                                    if let timestamp = trade.timestamp {
+                                        Text(jstTime(timestamp))
+                                            .font(.caption2).foregroundStyle(Theme.muted)
+                                    }
+                                }
+                                Spacer(minLength: 8)
+                                Text(yen(trade.profit))
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle((trade.profit ?? 0) < 0 ? .orange : Theme.cyan)
+                            }
+                            Divider().overlay(Theme.muted.opacity(0.2))
+                        }
+                    }
+                }
+            } else {
+                Text(client.historyError ?? "実験別戦歴を取得しています…")
+                    .font(.caption).foregroundStyle(Theme.muted)
+            }
+            if let error = client.historyError, client.history != nil {
+                Text(error).font(.caption).foregroundStyle(.orange)
+            }
+            Text("※ デモ取引の決済ログから集計。実験の境界はサーバー側の記録に基づきます。")
+                .font(.caption2).foregroundStyle(Theme.muted)
+        }.cardStyle()
+    }
+
+    private func parseISO8601(_ text: String) -> Date? {
+        let withFractions = ISO8601DateFormatter()
+        withFractions.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFractions.date(from: text) { return date }
+        let standard = ISO8601DateFormatter()
+        standard.formatOptions = [.withInternetDateTime]
+        return standard.date(from: text)
+    }
+
+    private func jstTime(_ text: String) -> String {
+        guard let date = parseISO8601(text) else { return text }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.timeZone = TimeZone(secondsFromGMT: 9)
+        formatter.dateFormat = "yyyy/MM/dd HH:mm:ss"
+        return formatter.string(from: date)
+    }
+
+    // analysis.time は確定した1分足の開始時刻（UTC）。60秒後が確定時刻。
+    private func candleCloseJST(_ text: String) -> String {
+        guard let start = parseISO8601(text) else { return "取得できません（\(text)）" }
+        let close = start.addingTimeInterval(60)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.timeZone = TimeZone(secondsFromGMT: 9)
+        formatter.dateFormat = "yyyy/MM/dd HH:mm:ss"
+        return formatter.string(from: close)
     }
 
     private var historyCard: some View {
