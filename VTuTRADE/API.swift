@@ -7,9 +7,17 @@ struct Trade: Codable, Identifiable {
     let profit: Double?
     let result: String?
     let timestamp: String?
+    let timestampJst: String?
+    let orderTimestampJst: String?
+    let orderAnalysis: Analysis?
+    let orderDirection: String?
     var id: String { tradeId ?? UUID().uuidString }
     enum CodingKeys: String, CodingKey {
         case tradeId = "trade_id", contract, profit, result, timestamp
+        case timestampJst = "timestamp_jst"
+        case orderTimestampJst = "order_timestamp_jst"
+        case orderAnalysis = "order_analysis"
+        case orderDirection = "order_direction"
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -20,6 +28,10 @@ struct Trade: Codable, Identifiable {
         profit = try c.decodeIfPresent(Double.self, forKey: .profit)
         result = try c.decodeIfPresent(String.self, forKey: .result)
         timestamp = try c.decodeIfPresent(String.self, forKey: .timestamp)
+        timestampJst = try c.decodeIfPresent(String.self, forKey: .timestampJst)
+        orderTimestampJst = try c.decodeIfPresent(String.self, forKey: .orderTimestampJst)
+        orderAnalysis = try c.decodeIfPresent(Analysis.self, forKey: .orderAnalysis)
+        orderDirection = try c.decodeIfPresent(String.self, forKey: .orderDirection)
     }
 }
 struct Analysis: Decodable {

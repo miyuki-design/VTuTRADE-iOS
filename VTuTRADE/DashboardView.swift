@@ -200,8 +200,16 @@ struct DashboardView: View {
                                         .font(.caption.bold())
                                     Text("ID: \(trade.tradeId ?? "—")")
                                         .font(.caption2).foregroundStyle(Theme.muted)
-                                    if let timestamp = trade.timestamp {
-                                        Text(jstTime(timestamp))
+                                    if let timestamp = trade.timestampJst ?? trade.timestamp {
+                                        Text("決済：" + displayJST(timestamp))
+                                            .font(.caption2).foregroundStyle(Theme.muted)
+                                    }
+                                    if let orderTime = trade.orderTimestampJst {
+                                        Text("注文：" + displayJST(orderTime))
+                                            .font(.caption2).foregroundStyle(Theme.muted)
+                                    }
+                                    if let analysis = trade.orderAnalysis {
+                                        Text(orderReason(analysis, direction: trade.orderDirection ?? trade.contract?.components(separatedBy: "|").last))
                                             .font(.caption2).foregroundStyle(Theme.muted)
                                     }
                                 }
@@ -233,6 +241,27 @@ struct DashboardView: View {
         let standard = ISO8601DateFormatter()
         standard.formatOptions = [.withInternetDateTime]
         return standard.date(from: text)
+    }
+
+    private func displayJST(_ text: String) -> String {
+        if text.count == 19 && text.contains("/") { return text }
+        return jstTime(text)
+    }
+
+    private func orderReason(_ analysis: Analysis, direction: String?) -> String {
+        guard let short = analysis.ema9, let long = analysis.ema21, let rsi = analysis.rsi14 else {
+            return "注文理由：分析値なし"
+        }
+        let trend = short > long ? "上昇傾向" : (short < long ? "下落傾向" : "横ばい")
+        let strategy: String
+        if direction == "LOW" && short > long && rsi > 50 && rsi < 70 {
+            strategy = "逆張りLOW条件成立"
+        } else if direction == "HIGH" && short < long && rsi > 30 && rsi < 50 {
+            strategy = "逆張りHIGH条件成立"
+        } else {
+            strategy = "当時の戦略条件は未確認"
+        }
+        return String(format: "%@・%@｜EMA9 %.5f / EMA21 %.5f / RSI %.2f", trend, strategy, short, long, rsi)
     }
 
     private func jstTime(_ text: String) -> String {
