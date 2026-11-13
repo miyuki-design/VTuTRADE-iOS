@@ -63,6 +63,7 @@ struct ExperimentSummary: Decodable, Identifiable {
 struct Dashboard: Decodable {
     let environment: String
     let paused: Bool
+    let canResume: Bool?
     let engineStatus: String?
     let orders: Int?
     let totalProfit: Double
@@ -74,6 +75,7 @@ struct Dashboard: Decodable {
     let recentTrades: [Trade]
     enum CodingKeys: String, CodingKey {
         case environment, paused, orders, wins, signal, analysis
+        case canResume = "can_resume"
         case engineStatus = "engine_status", totalProfit = "total_profit"
         case totalTrades = "total_trades", winRate = "win_rate", recentTrades = "recent_trades"
     }
@@ -114,6 +116,7 @@ final class TradeClient: ObservableObject {
     @Published var historyError: String?
     @Published var error: String?
     @Published var loading = false
+    @Published var controlBusy = false
     @Published var endpoint = UserDefaults.standard.string(forKey: "endpoint") ?? ""
     @Published var token = SecureToken.read()
     @Published var lastUpdated: Date?
@@ -164,11 +167,27 @@ final class TradeClient: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func pause() async {
-        guard dashboard?.paused == false else { return }
+        guard dashboard?.paused == false, !controlBusy else { return }
+        controlBusy = true
+        defer { controlBusy = false }
         do {
             _ = try await request("pause", method: "POST")
             await refresh()
         } catch { self.error = error.localizedDescription }
+    }
+    func resume() async {
+        guard dashboard?.paused == true,
+              dashboard?.canResume == true,
+              !controlBusy else { return }
+        controlBusy = true
+        defer { controlBusy = false }
+        do {
+            _ = try await request("resume", method: "POST")
+            await refresh()
+        } catch {
+            self.error = "再開できませんでした：\(error.localizedDescription)"
+            await refresh()
+        }
     }
 }
 

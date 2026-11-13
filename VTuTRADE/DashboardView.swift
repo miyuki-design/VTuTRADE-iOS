@@ -11,6 +11,7 @@ struct DashboardView: View {
     @StateObject private var client = TradeClient()
     @State private var showSettings = false
     @State private var confirmPause = false
+    @State private var confirmResume = false
     @State private var selectedExperiment = "EXP-003"
     private let timer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
 
@@ -64,6 +65,12 @@ struct DashboardView: View {
             } message: {
                 Text("保有中の注文はキャンセルせず、決済まで監視する設計です。")
             }
+            .alert("新規注文を再開しますか？", isPresented: $confirmResume) {
+                Button("再開する") { Task { await client.resume() } }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("DEMO環境で新規注文を再開します。エンジンがREADYで未決済注文や復旧待ちがない場合に限り、サーバーが許可します。")
+            }
             .task { await client.refresh() }
             .onReceive(timer) { _ in
                 if !showSettings { Task { await client.refresh() } }
@@ -84,16 +91,29 @@ struct DashboardView: View {
                 .font(.subheadline).foregroundStyle(Theme.muted)
             Text("注文記録：\(client.dashboard?.orders ?? 0)件  ／  決済記録：\(client.dashboard?.totalTrades ?? 0)件")
                 .font(.caption).foregroundStyle(Theme.muted)
-            Button {
-                confirmPause = true
-            } label: {
-                Label("新規注文を一時停止", systemImage: "pause.fill")
-                    .frame(maxWidth: .infinity).padding(12)
+            if client.dashboard?.paused == false {
+                Button {
+                    confirmPause = true
+                } label: {
+                    Label("新規注文を一時停止", systemImage: "pause.fill")
+                        .frame(maxWidth: .infinity).padding(12)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(client.controlBusy)
+            } else {
+                Button {
+                    confirmResume = true
+                } label: {
+                    Label("新規注文を再開", systemImage: "play.fill")
+                        .frame(maxWidth: .infinity).padding(12)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(client.dashboard?.canResume != true || client.controlBusy)
+                if client.dashboard != nil && client.dashboard?.canResume != true {
+                    Text("再開不可：エンジンのREADY状態・未決済注文・復旧待ちを確認してください。")
+                        .font(.caption).foregroundStyle(Theme.muted)
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(client.dashboard?.paused != false)
-            Text("再開操作は安全性の検証が完了するまで無効です。")
-                .font(.caption).foregroundStyle(Theme.muted)
         }.cardStyle()
     }
 
