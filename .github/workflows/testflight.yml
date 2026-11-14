@@ -361,13 +361,24 @@ jobs:
 
           echo "===== TestFlightアップロード開始 ====="
 
-          xcrun altool --upload-app \
+          UPLOAD_LOG="$RUNNER_TEMP/vtutrade-upload.log"
+
+          if ! xcrun altool --upload-app \
             --type ios \
             --file "$IPA" \
             --apiKey "$API_KEY_ID" \
-            --apiIssuer "$API_ISSUER_ID"
+            --apiIssuer "$API_ISSUER_ID" 2>&1 | tee "$UPLOAD_LOG"; then
+            echo "❌ TestFlightアップロードの実行に失敗しました"
+            exit 1
+          fi
 
-          echo "✅ TestFlightアップロード完了"
+          # altoolが失敗内容を出力しても終了コード0になる場合を検知する。
+          if grep -Eiq 'ERROR:|Failed to upload|FORBIDDEN\.REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED' "$UPLOAD_LOG"; then
+            echo "❌ TestFlightアップロードでApple側のエラーが検出されました"
+            exit 1
+          fi
+
+          echo "✅ TestFlightアップロードコマンドがエラーなく完了"
 
       - name: Cleanup signing files
         if: always()
