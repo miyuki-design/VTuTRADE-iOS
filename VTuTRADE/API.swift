@@ -34,7 +34,7 @@ struct Trade: Decodable, Identifiable {
         orderDirection = try c.decodeIfPresent(String.self, forKey: .orderDirection)
     }
 }
-// 表示用のEXP-006価格データと、過去実験のEMA/RSIデータを共通で復号する。
+// EXP-006/007共通の価格分析データと、過去実験のEMA/RSIデータを復号する。
 // 未提供の項目はnilのままにし、古い履歴も読み込めるようにする。
 struct Analysis: Decodable {
     let time: String?
@@ -58,7 +58,7 @@ struct Analysis: Decodable {
         case change5min = "change_5min"
     }
 
-    // EXP-006のHIGH価格条件: 5分では下落、直近15秒では上昇。
+    // EXP-006/007共通のHIGH価格条件: 5分では下落、直近15秒では上昇。
     // 実際の注文には時間・安全制御など、別の条件も必要。
     var highPriceConditionMet: Bool? {
         guard let close, let price15sec, let price5min else { return nil }

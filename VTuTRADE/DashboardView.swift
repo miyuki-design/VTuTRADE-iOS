@@ -12,7 +12,7 @@ struct DashboardView: View {
     @State private var showSettings = false
     @State private var confirmPause = false
     @State private var confirmResume = false
-    @State private var selectedExperiment = "EXP-006"
+    @State private var selectedExperiment = "EXP-007"
     private let timer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -29,8 +29,8 @@ struct DashboardView: View {
                     }
                     statusCard
                     HStack(spacing: 12) {
-                        metric("EXP-006 累計損益", yen(client.dashboard?.totalProfit), "yensign.circle")
-                        metric("EXP-006 勝率", String(format: "%.1f%%", client.dashboard?.winRate ?? 0), "chart.bar")
+                        metric("EXP-007 累計損益", yen(client.dashboard?.totalProfit), "yensign.circle")
+                        metric("EXP-007 勝率", String(format: "%.1f%%", client.dashboard?.winRate ?? 0), "chart.bar")
                     }
                     analysisCard
                     experimentHistoryCard
@@ -39,7 +39,7 @@ struct DashboardView: View {
                         Text(error).font(.footnote).foregroundStyle(.orange)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Text("※ 決済履歴ファイルに記録された取引のみを集計。未記録の取引がある場合、実際の損益と異なる可能性があります。")
+                    Text("※ EXP-007の成績は記録済みのEXP-007決済分のみ。日次安全判定の対象期間とは異なる場合があります。未記録の取引があれば実際の損益とも異なります。")
                         .font(.caption2).foregroundStyle(Theme.muted)
                 }.padding(16)
             }
@@ -75,9 +75,12 @@ struct DashboardView: View {
             .onReceive(timer) { _ in
                 if !showSettings { Task { await client.refresh() } }
             }
-            .onChange(of: client.history?.experiments.map(\.experimentId) ?? []) { _, ids in
-                // 初回にEXP-006が無い場合も、実在する実験を表示する。
-                if !ids.contains(selectedExperiment), let first = ids.first {
+            .onChange(of: client.history?.experiments.map(\.experimentId) ?? []) { previousIDs, ids in
+                // EXP-007の取引が初めて記録された際、自動的に最新実験へ切り替える。
+                // その後、ユーザーが過去実験を選択した場合は選択を尊重する。
+                if ids.contains("EXP-007") && !previousIDs.contains("EXP-007") {
+                    selectedExperiment = "EXP-007"
+                } else if !ids.contains(selectedExperiment), let first = ids.first {
                     selectedExperiment = first
                 }
             }
@@ -97,7 +100,7 @@ struct DashboardView: View {
                 .font(.subheadline).foregroundStyle(Theme.muted)
             Text("注文記録（全期間）：\(client.dashboard?.orders ?? 0)件")
                 .font(.caption).foregroundStyle(Theme.muted)
-            Text("決済記録（EXP-006）：\(client.dashboard?.totalTrades ?? 0)件")
+            Text("決済記録（EXP-007）：\(client.dashboard?.totalTrades ?? 0)件")
                 .font(.caption).foregroundStyle(Theme.muted)
             if client.dashboard?.paused == false {
                 Button {
@@ -135,7 +138,7 @@ struct DashboardView: View {
     private var analysisCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("テクニカル分析（EXP-006）").font(.headline)
+                Text("テクニカル分析（EXP-007）").font(.headline)
                 Spacer()
                 Text("参考: \(client.dashboard?.signal ?? "—")")
                     .font(.subheadline.bold()).foregroundStyle(Theme.cyan)
@@ -260,7 +263,7 @@ struct DashboardView: View {
     }
 
     private func orderReason(_ analysis: Analysis, direction: String?) -> String {
-        // EXP-006の注文時記録は生の価格を優先。丸められた変動幅だけで成立判定しない。
+        // EXP-006/007の注文時記録は生の価格を優先。丸められた変動幅だけで成立判定しない。
         if let close = analysis.close, let five = analysis.price5min, let fifteen = analysis.price15sec {
             let condition = close < five && close > fifteen ? "成立" : "不成立"
             return String(
@@ -299,7 +302,7 @@ struct DashboardView: View {
 
     private var historyCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("最近の決済履歴").font(.headline)
+            Text("最近の決済履歴（EXP-007）").font(.headline)
             if let trades = client.dashboard?.recentTrades, !trades.isEmpty {
                 ForEach(trades) { trade in
                     HStack(alignment: .top) {
