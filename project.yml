@@ -13,6 +13,8 @@ targets:
     sources:
       - VTuTRADE
 
+    entitlements:
+      path: VTuTRADE/VTuTRADE.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.miyukidesign.vtutrade
