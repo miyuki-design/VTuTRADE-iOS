@@ -158,36 +158,99 @@ final class TradeClient: ObservableObject {
     @Published var endpoint = UserDefaults.standard.string(forKey: "endpoint") ?? ""
     @Published var token = SecureToken.read()
     @Published var lastUpdated: Date?
+    @Published var pushPermission = "未確認"
+    @Published var pushTokenStatus = UserDefaults.standard.string(forKey: "apns_device_token") == nil ? "未取得" : "取得済み（保存済み）"
+    @Published var pushServerStatus = "未確認"
+    @Published var pushLastError: String?
+    @Published var pushBusy = false
 
-    // APNsの端末登録は、通知許可とサーバー設定が揃ってから実行する。
-    // サーバーに /push/register が実装されるまでは取引機能に影響しない。
-    func enablePushNotifications() async {
+    // APNsの許可、トークン取得、サーバー登録をそれぞれ独立して診断する。
+    // 取引・ダッシュボード更新への影響を避けるため、失敗時も例外は外へ伝播させない。
+    func retryPushRegistration() async {
+        guard !pushBusy else { return }
+        pushBusy = true
+        defer { pushBusy = false }
+        pushLastError = nil
+        pushServerStatus = "確認中"
         let center = UNUserNotificationCenter.current()
         do {
-            let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
-            if granted {
-                await MainActor.run {
-                    UIApplication.shared.registerForRemoteNotifications()
+            let settings = await center.notificationSettings()
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                pushPermission = "許可済み"
+            case .denied:
+                pushPermission = "拒否（iPhoneの設定で許可してください）"
+                pushServerStatus = "通知許可なし"
+                return
+            case .notDetermined:
+                let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
+                pushPermission = granted ? "許可済み" : "拒否"
+                if !granted {
+                    pushServerStatus = "通知許可なし"
+                    return
                 }
+            @unknown default:
+                pushPermission = "不明"
+                pushServerStatus = "通知許可の状態を確認できません"
+                return
             }
         } catch {
-            NSLog("VTuTRADE notification permission failed: %@", error.localizedDescription)
+            pushPermission = "確認失敗"
+            pushLastError = "通知許可の取得：\(error.localizedDescription)"
+            pushServerStatus = "失敗"
+            return
+        }
+
+        // APNsの登録要求は都度実行する。完了はAppDelegateのコールバックで届く。
+        UIApplication.shared.registerForRemoteNotifications()
+        if let savedToken = UserDefaults.standard.string(forKey: "apns_device_token"),
+           !savedToken.isEmpty {
+            pushTokenStatus = "取得済み（保存済み）"
+            await registerPushToken(savedToken)
+        } else {
+            pushTokenStatus = "APNsからの返答待ち"
+            pushServerStatus = "トークン待ち"
         }
     }
 
-    func registerPushToken(_ token: String) async {
-        guard !token.isEmpty else { return }
+    func apnsTokenReceived(_ deviceToken: String) async {
+        pushTokenStatus = "取得済み"
+        pushLastError = nil
+        await registerPushToken(deviceToken)
+    }
+
+    func apnsTokenFailed(_ message: String) {
+        pushTokenStatus = "取得失敗"
+        pushServerStatus = "登録不可"
+        pushLastError = "APNsトークンの取得：\(message)"
+    }
+
+    func registerPushToken(_ deviceToken: String) async {
+        guard !deviceToken.isEmpty else { return }
+        guard URL(string: endpoint)?.scheme == "https", !token.isEmpty else {
+            pushServerStatus = "接続先・APIトークン未設定"
+            pushLastError = "接続設定を保存してから再試行してください。"
+            return
+        }
+        pushServerStatus = "登録中"
         do {
             let payload: [String: String] = [
-                "device_token": token,
+                "device_token": deviceToken,
                 "platform": "ios",
                 "environment": "production"
             ]
             let body = try JSONSerialization.data(withJSONObject: payload)
-            _ = try await request("push/register", method: "POST", body: body)
-            UserDefaults.standard.set(token, forKey: "apns_registered_token")
+            let data = try await request("push/register", method: "POST", body: body)
+            guard let response = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  response["registered"] as? Bool == true else {
+                throw APIError.invalidResponse
+            }
+            UserDefaults.standard.set(deviceToken, forKey: "apns_registered_token")
+            pushServerStatus = "登録成功"
+            pushLastError = nil
         } catch {
-            // 未設定・未実装時は取引を止めず、次回起動時に再試行する。
+            pushServerStatus = "登録失敗"
+            pushLastError = error.localizedDescription
             NSLog("VTuTRADE push registration pending: %@", error.localizedDescription)
         }
     }

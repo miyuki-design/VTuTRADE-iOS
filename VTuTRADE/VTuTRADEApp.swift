@@ -19,6 +19,8 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
     func application(_ application: UIApplication,
                      didFailToRegisterForRemoteNotificationsWithError error: Error) {
         NSLog("VTuTRADE APNs registration failed: %@", error.localizedDescription)
+        NotificationCenter.default.post(name: .vtutradeAPNSFailure,
+                                        object: error.localizedDescription)
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
@@ -30,6 +32,7 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
 
 extension Notification.Name {
     static let vtutradeAPNSToken = Notification.Name("vtutradeAPNSToken")
+    static let vtutradeAPNSFailure = Notification.Name("vtutradeAPNSFailure")
 }
 
 @main

@@ -73,14 +73,15 @@ struct DashboardView: View {
             }
             .task {
                 await client.refresh()
-                await client.enablePushNotifications()
-                if let token = UserDefaults.standard.string(forKey: "apns_device_token") {
-                    await client.registerPushToken(token)
-                }
+                await client.retryPushRegistration()
             }
             .onReceive(NotificationCenter.default.publisher(for: .vtutradeAPNSToken)) { notification in
                 guard let token = notification.object as? String else { return }
-                Task { await client.registerPushToken(token) }
+                Task { await client.apnsTokenReceived(token) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .vtutradeAPNSFailure)) { notification in
+                guard let message = notification.object as? String else { return }
+                client.apnsTokenFailed(message)
             }
             .onReceive(timer) { _ in
                 if !showSettings { Task { await client.refresh() } }
@@ -352,8 +353,26 @@ struct DashboardView: View {
                     Button("保存して接続確認") {
                         client.saveSettings()
                         showSettings = false
-                        Task { await client.refresh() }
+                        Task {
+                            await client.refresh()
+                            await client.retryPushRegistration()
+                        }
                     }
+                }
+                Section("プッシュ通知の診断") {
+                    LabeledContent("通知許可", value: client.pushPermission)
+                    LabeledContent("APNsトークン", value: client.pushTokenStatus)
+                    LabeledContent("サーバー登録", value: client.pushServerStatus)
+                    if let message = client.pushLastError {
+                        Text(message).font(.footnote).foregroundStyle(.orange)
+                            .textSelection(.enabled)
+                    }
+                    Button("通知登録を再試行") {
+                        Task { await client.retryPushRegistration() }
+                    }
+                    .disabled(client.pushBusy)
+                    Text("端末トークンやAPI認証情報の値は表示しません。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("接続設定")
