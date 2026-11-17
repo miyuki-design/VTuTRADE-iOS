@@ -71,7 +71,17 @@ struct DashboardView: View {
             } message: {
                 Text("DEMO環境で新規注文を再開します。エンジンがREADYで未決済注文や復旧待ちがない場合に限り、サーバーが許可します。")
             }
-            .task { await client.refresh() }
+            .task {
+                await client.refresh()
+                await client.enablePushNotifications()
+                if let token = UserDefaults.standard.string(forKey: "apns_device_token") {
+                    await client.registerPushToken(token)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .vtutradeAPNSToken)) { notification in
+                guard let token = notification.object as? String else { return }
+                Task { await client.registerPushToken(token) }
+            }
             .onReceive(timer) { _ in
                 if !showSettings { Task { await client.refresh() } }
             }

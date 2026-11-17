@@ -1,5 +1,7 @@
 import Foundation
 import Security
+import UIKit
+import UserNotifications
 
 struct Trade: Decodable, Identifiable {
     let tradeId: String?
@@ -157,13 +159,46 @@ final class TradeClient: ObservableObject {
     @Published var token = SecureToken.read()
     @Published var lastUpdated: Date?
 
+    // APNsの端末登録は、通知許可とサーバー設定が揃ってから実行する。
+    // サーバーに /push/register が実装されるまでは取引機能に影響しない。
+    func enablePushNotifications() async {
+        let center = UNUserNotificationCenter.current()
+        do {
+            let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
+            if granted {
+                await MainActor.run {
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+            }
+        } catch {
+            NSLog("VTuTRADE notification permission failed: %@", error.localizedDescription)
+        }
+    }
+
+    func registerPushToken(_ token: String) async {
+        guard !token.isEmpty else { return }
+        do {
+            let payload: [String: String] = [
+                "device_token": token,
+                "platform": "ios",
+                "environment": "production"
+            ]
+            let body = try JSONSerialization.data(withJSONObject: payload)
+            _ = try await request("push/register", method: "POST", body: body)
+            UserDefaults.standard.set(token, forKey: "apns_registered_token")
+        } catch {
+            // 未設定・未実装時は取引を止めず、次回起動時に再試行する。
+            NSLog("VTuTRADE push registration pending: %@", error.localizedDescription)
+        }
+    }
+
     func saveSettings() {
         endpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         UserDefaults.standard.set(endpoint, forKey: "endpoint")
         SecureToken.save(token)
     }
-    private func request(_ path: String, method: String = "GET") async throws -> Data {
+    private func request(_ path: String, method: String = "GET", body: Data? = nil) async throws -> Data {
         guard let root = URL(string: endpoint), root.scheme == "https",
               root.host != nil, root.user == nil, root.password == nil,
               root.query == nil, root.fragment == nil,
@@ -171,6 +206,10 @@ final class TradeClient: ObservableObject {
         let url = root.appendingPathComponent(path)
         var req = URLRequest(url: url)
         req.httpMethod = method
+        if let body {
+            req.httpBody = body
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
         req.timeoutInterval = 12
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
